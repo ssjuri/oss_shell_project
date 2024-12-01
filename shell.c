@@ -20,79 +20,60 @@ int IS_BACKGROUND = 0;
 
 // 함수 선언
 void initialize_shell();
-int parse_arguments(char *cmd, char *argv[]);
+int parse_command_arguments(char *cmd, char *argv[]);
 void execute_shell();
 void handle_input_redirection(char **argv);
 void handle_output_redirection(char **argv);
 void handle_append_redirection(char **argv);
-int handle_pipes_and_execute(char **argv);
-void execute_with_redirection(char **argv);
-void change_directory_command(int argc, char *argv[]);
-void setup_signal_handling();
-void handle_sigint(int signo);
-void handle_sigtstp(int signo);
-void handle_sigchld(int signo);
+int process_pipeline_and_execute(char **argv);
+void handle_redirection_and_execute(char **argv);
+void execute_change_directory(int argc, char *argv[]);
+void signal_handler_sigint();
+void signal_handler_sigtstp();
+void setup_signal_handlers();
 
-// 시그널 핸들러
-void handle_sigint(int signo) {
+// 신호 핸들러
+void handler_sigint(int signo) {
     if (pid > 0) {
-        printf("\nCTRL+C (SIGINT) 수신. 현재 프로세스를 중지합니다...\n");
+        printf("\nCTRL+C (SIGINT) 신호를 받았습니다. 현재 프로세스를 중지합니다...\n");
         kill(pid, SIGINT);
     } else {
-        printf("\nCTRL+C (SIGINT) 수신.\n");
+        printf("\nCTRL+C (SIGINT) 신호를 받았습니다.\n");
     }
 }
 
-void handle_sigtstp(int signo) {
+void handler_sigtstp(int signo) {
     if (pid > 0) {
-        printf("\nCTRL+Z (SIGTSTP) 수신. 현재 프로세스를 일시 중지합니다...\n");
+        printf("\nCTRL+Z (SIGTSTP) 신호를 받았습니다. 현재 프로세스를 일시 중지합니다...\n");
         kill(pid, SIGTSTP);
     } else {
-        printf("\nCTRL+Z (SIGTSTP) 수신.\n");
+        printf("\nCTRL+Z (SIGTSTP) 신호를 받았습니다.\n");
     }
 }
 
-void handle_sigchld(int signo) {
-    pid_t finished_pid;
-    int status;
-
-    // 수집하지 않은 모든 자식 프로세스 수집
-    while ((finished_pid = waitpid(-1, &status, WNOHANG)) > 0) {
-        printf("[프로세스 %d 완료]\n", finished_pid);
-    }
-}
-
-// 쉘 초기화
+// 셸 초기화
 void initialize_shell() {
-    setup_signal_handling();
+    setup_signal_handlers();
     printf("\n쉘에 오신 것을 환영합니다!\n");
 }
 
-// 시그널 처리 설정
-void setup_signal_handling() {
-    struct sigaction sigint_action, sigquit_action, sigchld_action;
+// 신호 처리 설정
+void setup_signal_handlers() {
+    struct sigaction sigint_action, sigtstp_action;
 
-    // SIGINT (CTRL+C)
-    sigint_action.sa_handler = handle_sigint;
+    sigint_action.sa_handler = handler_sigint;
     sigfillset(&(sigint_action.sa_mask));
     sigint_action.sa_flags = 0;
     sigaction(SIGINT, &sigint_action, NULL);
 
-    // SIGTSTP (CTRL+Z)
-    sigquit_action.sa_handler = handle_sigtstp;
-    sigfillset(&(sigquit_action.sa_mask));
-    sigquit_action.sa_flags = 0;
-    sigaction(SIGTSTP, &sigquit_action, NULL);
-
-    // SIGCHLD (백그라운드 프로세스 종료 감지)
-    sigchld_action.sa_handler = handle_sigchld;
-    sigfillset(&(sigchld_action.sa_mask));
-    sigchld_action.sa_flags = SA_RESTART | SA_NOCLDSTOP;
-    sigaction(SIGCHLD, &sigchld_action, NULL);
+    sigtstp_action.sa_handler = handler_sigtstp;
+    sigfillset(&(sigtstp_action.sa_mask));
+    sigtstp_action.sa_flags = 0;
+    sigaction(SIGTSTP, &sigtstp_action, NULL);
 }
 
-// 명령어 인자 파싱
-int parse_arguments(char *cmd, char *argv[]) {
+// 명령어 인수 분석
+int parse_command_arguments(char *cmd, char *argv[]) {
     int narg = 0;
     while (*cmd) {
         while (*cmd == ' ' || *cmd == '\t') *cmd++ = '\0';
@@ -109,16 +90,16 @@ int parse_arguments(char *cmd, char *argv[]) {
     return narg;
 }
 
-// 디렉터리 변경 구현
-void change_directory_command(int argc, char *argv[]) {
+// 디렉토리 변경 기능
+void execute_change_directory(int argc, char *argv[]) {
     if (argc < 2) {
-        fprintf(stderr, "cd: 인자가 없습니다\n");
+        fprintf(stderr, "cd: 인수가 누락되었습니다\n");
     } else if (chdir(argv[1]) == -1) {
         perror("cd");
     }
 }
 
-// 파일 리디렉션 함수
+// 파일 리다이렉션 처리 함수
 void handle_input_redirection(char **argv) {
     for (int i = 0; argv[i]; i++) {
         if (strcmp(argv[i], "<") == 0) {
@@ -167,8 +148,8 @@ void handle_append_redirection(char **argv) {
     }
 }
 
-// 리디렉션 및 명령 실행
-void execute_with_redirection(char **argv) {
+// 리다이렉션과 명령 실행
+void handle_redirection_and_execute(char **argv) {
     handle_input_redirection(argv);
     handle_output_redirection(argv);
     handle_append_redirection(argv);
@@ -178,8 +159,8 @@ void execute_with_redirection(char **argv) {
     exit(EXIT_FAILURE);
 }
 
-// 파이프 구현
-int handle_pipes_and_execute(char **argv) {
+// 파이프라인 처리 및 실행
+int process_pipeline_and_execute(char **argv) {
     for (int i = 0; argv[i]; i++) {
         if (strcmp(argv[i], "|") == 0) {
             argv[i] = NULL;
@@ -195,7 +176,7 @@ int handle_pipes_and_execute(char **argv) {
                 dup2(fd[1], STDOUT_FILENO);
                 close(fd[0]);
                 close(fd[1]);
-                execute_with_redirection(argv);
+                handle_redirection_and_execute(argv);
             }
 
             pid_t pid2 = fork();
@@ -203,7 +184,7 @@ int handle_pipes_and_execute(char **argv) {
                 dup2(fd[0], STDIN_FILENO);
                 close(fd[1]);
                 close(fd[0]);
-                execute_with_redirection(&argv[i + 1]);
+                handle_redirection_and_execute(&argv[i + 1]);
             }
 
             close(fd[0]);
@@ -214,7 +195,7 @@ int handle_pipes_and_execute(char **argv) {
             return 1;
         }
     }
-    return 0;
+    return 0; // 파이프가 없는 경우
 }
 
 // 쉘 실행
@@ -230,29 +211,35 @@ void execute_shell() {
             exit(0);
         }
 
-        narg = parse_arguments(buf, argv);
+        narg = parse_command_arguments(buf, argv);
         if (narg == 0) continue;
 
         if (strcmp(argv[0], "cd") == 0) {
-            change_directory_command(narg, argv);
+            execute_change_directory(narg, argv);
             continue;
         }
 
         pid = fork();
         if (pid == 0) {
-            setup_signal_handling();
-            if (!handle_pipes_and_execute(argv)) {
-                execute_with_redirection(argv);
+            setup_signal_handlers();
+            if (!process_pipeline_and_execute(argv)) {
+                handle_redirection_and_execute(argv);
             }
             exit(EXIT_SUCCESS);
         } else if (pid > 0) {
             if (IS_BACKGROUND) {
-                printf("[프로세스 %d가 백그라운드에서 실행 중]\n", pid);
+                printf("[프로세스 %d 백그라운드에서 실행 중]\n", pid);
             } else {
                 waitpid(pid, &status, 0);
             }
         } else {
             perror("fork");
+        }
+
+        // 완료된 백그라운드 프로세스 확인
+        int wpid;
+        while ((wpid = waitpid(-1, &status, WNOHANG)) > 0) {
+            printf("[%d] 완료\n", wpid);
         }
     }
 }
